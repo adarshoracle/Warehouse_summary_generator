@@ -79,20 +79,29 @@ define(['N/ui/serverWidget', 'N/llm', 'N/search', 'N/log'], (serverWidget, llm, 
 - location: The warehouse location (e.g., Buffalo, NY)
 - orderType: Type of order (e.g., Sales Order, Purchase Order, Transfer Order)
 - statusType: Status of the order (e.g., Pending Approval, Pending Receipt, Partially Received, Closed etc.)
+- Time: if user mentions a time or day or anything related to to time, extract it as MM/DD/YYYY format.
+- Subsidiary: if user mentions a subsidiary, extract it.
+- Vendor: if user mentions a vendor, extract it.
+- lineitem: if user mentions a item extract it.(eg: coke).
 
+give everything dont leave any single detail because every detail is important for filtering.
 Respond **only** with a single JSON object in the following format:
 
 {
   "location": "Buffalo, NY",
   "orderType": "Purchase Order",
-  "statusType": "Pending Approval"
+  "statusType": "Pending Approval",
+  "time": "MM/DD/YYYY",
+  "subsidiary": "Subsidiary Name",
+  "vendor": "Vendor Name",
+  "lineitem": "Item Name"
 }
 
 Omit fields not mentioned in the query. Do not include any explanation, just the JSON.`,
           prompt: prompt,
           modelFamily: llm.ModelFamily.COHERE_COMMAND_R_PLUS,
           modelParameters: {
-            maxTokens: 500,
+            maxTokens: 1000,
             temperature: 0,
             topK: 0,
             topP: 1,
@@ -118,6 +127,8 @@ Omit fields not mentioned in the query. Do not include any explanation, just the
       let filters = [];
       let itemCount = 0;
       const itemNames = [];
+      if(!responseJson.lineitem){
+      filters.push(['mainline', 'is', 'T']);}
 
       if (!responseJson.error) {
         // Add location filter
@@ -160,8 +171,7 @@ Omit fields not mentioned in the query. Do not include any explanation, just the
             'Pending Billing/Partially Received': 'PurchOrd:D',
             'Pending Billing': 'PurchOrd:E',
             'Billed': 'PurchOrd:F',
-            'Closed': 'PurchOrd:G',
-            'Cancelled': 'PurchOrd:H'
+            'Closed': 'PurchOrd:H',
           };
           const statusFilter = statusTypeMap[responseJson.statusType];
           if (statusFilter) {
@@ -170,7 +180,69 @@ Omit fields not mentioned in the query. Do not include any explanation, just the
             log.debug('statusFilter', statusFilter);
           }
         }
+
+        if(responseJson.time){
+          const timeFilter = responseJson.time;
+          if(filters.length) filters.push('AND');
+          filters.push(['trandate','onorafter', timeFilter]);
+        }
+
+        if(responseJson.subsidiary){
+           const subsidiarySearch = search.create({
+            type: search.Type.SUBSIDIARY,
+            filters: [['name', 'is', responseJson.subsidiary]],
+            columns: ['internalid']
+           });
+           const subsidiaryResults = subsidiarySearch.run().getRange({start: 0, end: 1});
+           if(subsidiaryResults.length > 0)
+           {
+            const subsidiaryId = subsidiaryResults[0].getValue('internalid');
+            if(filters.length) filters.push('AND');
+            filters.push(['subsidiary','anyof',subsidiaryId]);
+            log.debug('subsidiaryId', subsidiaryId);
+
+           }
+        }
+        
+        if(responseJson.vendor){
+          const vendorSearch = search.create({
+            type: search.Type.VENDOR,
+            filters: [['entityid', 'is', responseJson.vendor]],
+            columns: ['internalid']
+          });
+          const vendorResults = vendorSearch.run().getRange({start: 0, end: 1});
+          if(vendorResults.length > 0)
+          {
+            const vendorId = vendorResults[0].getValue('internalid');
+            if(filters.length) filters.push('AND');
+            filters.push(['entity','anyof',vendorId]);
+            log.debug('vendorId', vendorId);
+          }
+
+        }
+
+        // there is an error in this have to check tomorrow.............
+        if(responseJson.lineitem)
+        {
+          const itemSearch = search.create({
+            type: search.Type.ITEM,
+            filters: [['name','is', responseJson.lineitem]],
+            columns: ['internalid']
+          });
+          const itemResults = itemSearch.run().getRange({start:0, end: 1});
+          if(itemResults.length > 0)
+          {
+            const itemId = itemResults[0].getValue('internalid');
+            if(filters.length) filters.push('AND');
+            filters.push(['item','anyof',itemId]);
+            log.debug('itemId', itemId);
+          }
+        }
+
+
         log.debug('Order Search Filters', JSON.stringify(filters));
+        
+            
         const orderSearch = search.create({
           type: search.Type.TRANSACTION,
           filters: filters,
@@ -192,13 +264,13 @@ Omit fields not mentioned in the query. Do not include any explanation, just the
 
             output += `#${i + 1}\n`;
             output += `Transaction ID: ${tranId}\n`;
-            output += `Type          : ${type}\n`;
-            output += `Status        : ${status}\n`;
-            output += `Entity        : ${entity}\n`;
-            output += `Location      : ${location}\n`;
-            output += `Date          : ${tranDate}\n`;
-            output += `Subsidiary    : ${subsidiary}\n`;
-            output += `-----------------------------\n`;
+            // output += `Type          : ${type}\n`;
+            // output += `Status        : ${status}\n`;
+            // output += `Entity        : ${entity}\n`;
+            // output += `Location      : ${location}\n`;
+            // output += `Date          : ${tranDate}\n`;
+            // output += `Subsidiary    : ${subsidiary}\n`;
+            // output += `-----------------------------\n`;
 
             itemNames.push(tranId);
             itemCount++;
@@ -207,15 +279,42 @@ Omit fields not mentioned in the query. Do not include any explanation, just the
           output = 'No matching orders found.';
         }
 
-        chatHistory.push({
-          role: llm.ChatRole.CHATBOT,
-          text: JSON.stringify({
-            extractedFields: responseJson,
-            totalItems: itemCount,
-            transactionIds: itemNames,
-            rawOutput: output
-          }, null, 2)
-        });
+       // Add system-level context and summary prompt
+const summaryPrompt = `
+You are a warehouse operations assistant. Based on the extracted filters and data below, generate a concise and useful summary of the results. Mention total orders, key patterns (if any), and make it actionable or informative.
+
+Extracted Filters:
+${JSON.stringify(responseJson, null, 2)}
+
+Order Data:
+${output}
+`;
+
+const summaryResponse = llm.generateText({
+  preamble: `You are a helpful assistant that summarizes order information for a warehouse team.`,
+  prompt: summaryPrompt,
+  modelFamily: llm.ModelFamily.COHERE_COMMAND_R_PLUS,
+  modelParameters: {
+    maxTokens: 1000,
+    temperature: 0.3,
+    topK: 0,
+    topP: 1,
+    frequencyPenalty: 0,
+    presencePenalty: 0
+  }
+}).text;
+
+// Add both raw and summarized info to chat history
+chatHistory.push({
+  role: llm.ChatRole.CHATBOT,
+  text: JSON.stringify({
+    extractedFields: responseJson,
+    totalItems: itemCount,
+    summary: summaryResponse,
+    itemnames: itemNames,
+  }, null, 2)
+});
+
       } else {
         chatHistory.push({
           role: llm.ChatRole.CHATBOT,
