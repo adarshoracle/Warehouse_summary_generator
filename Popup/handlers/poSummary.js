@@ -1,39 +1,19 @@
 /**
- * @NApiVersion 2.1
- * @NScriptType Suitelet
+ * Purchase Order Summary Handler
  */
+define(['N/record', 'N/llm', 'N/log'], function (recordModule, llm, log) {
 
-define(['N/ui/serverWidget', 'N/record', 'N/llm', 'N/log'], function(serverWidget, recordModule, llm, log) {
-
-    function onRequest(context) {
-        var request = context.request;
-
-        if (request.method === 'GET') {
-            var recordId = request.parameters.recordId;
-            var recordType = request.parameters.recordType;
-
+    function generateSummary(recordId) {
+        try {
             var rec = recordModule.load({
-                type: recordType,
+                type: 'purchaseorder',
                 id: recordId
             });
 
-            log.debug({
-                title: 'Loaded Record',
-                details: 'Record Type: ' + recordType + ', Record ID: ' + recordId
-            });
+            var status = rec.getValue({ fieldId: 'status' });
+            var location = rec.getText({ fieldId: 'location' });
 
-            var status = rec.getValue({
-                fieldId: 'status'
-            });
-
-            var location = rec.getText({
-                fieldId: 'location'
-            });
-
-            var itemCount = rec.getLineCount({
-                sublistId: 'item'
-            });
-
+            var itemCount = rec.getLineCount({ sublistId: 'item' });
             var items = [];
 
             for (var i = 0; i < itemCount; i++) {
@@ -69,17 +49,17 @@ define(['N/ui/serverWidget', 'N/record', 'N/llm', 'N/log'], function(serverWidge
                 });
             }
 
-            // First summary prompt
-            var summaryPrompt0 = `
-You are an intelligent assistant that generates insightful and professional summaries for purchase orders. 
-Analyze the purchase order details provided below.
+            // 🔹 Prompt 1
+            var summaryPrompt0 = `You are an intelligent assistant that generates insightful and professional summaries for purchase orders. 
+                                    Analyze the purchase order details provided below.
 
-Status: ${status}
-Location: ${location}
-Number of Items: ${itemCount}
-Items:
-${items.map(i => `- ${i.item} (Ordered: ${i.quantity}, Received: ${i.received}, Amount: ${i.amount})`).join('\n')}
-`;
+                                    Status: ${status}
+                                    Location: ${location}
+                                    Number of Items: ${itemCount}
+                                    Items:
+                                    ${items.map(i =>
+                                        `- ${i.item} (Ordered: ${i.quantity}, Received: ${i.received}, Amount: ${i.amount})`
+                                    ).join('\n')}`;
 
             const summary0 = llm.generateText({
                 preamble: `You are an expert in summarizing purchase orders.`,
@@ -95,19 +75,18 @@ ${items.map(i => `- ${i.item} (Ordered: ${i.quantity}, Received: ${i.received}, 
                 }
             }).text;
 
-            // Second summary prompt
-            var summaryPrompt1 = `
-Summarize the purchase order based on item data.
+            // 🔹 Prompt 2
+            var summaryPrompt1 = `Summarize the purchase order based on item data.
+                                    Include:
+                                    - Ordered vs received quantities
+                                    - Pending receipts
+                                    - Total amount
+                                    - High-value items or partially received ones
 
-Include:
-- Ordered vs received quantities
-- Pending receipts
-- Total amount
-- High-value items or partially received ones
-
-Items:
-${items.map(i => `- ${i.item} (Ordered: ${i.quantity}, Received: ${i.received}, Amount: ${i.amount})`).join('\n')}
-`;
+                                    Items:
+                                    ${items.map(i =>
+                                        `- ${i.item} (Ordered: ${i.quantity}, Received: ${i.received}, Amount: ${i.amount})`
+                                    ).join('\n')}`;
 
             const summary1 = llm.generateText({
                 preamble: `You are an expert in summarizing purchase orders.`,
@@ -123,20 +102,17 @@ ${items.map(i => `- ${i.item} (Ordered: ${i.quantity}, Received: ${i.received}, 
                 }
             }).text;
 
-            // Final merged summary
-            var finalPrompt = `
-You are an expert in purchase order analysis. Here are two draft summaries:
+            // 🔹 Final Merge
+            var finalPrompt = `You are an expert in purchase order analysis. Here are two draft summaries:
+                                Summary 1:
+                                ${summary0}
 
-Summary 1:
-${summary0}
+                                Summary 2:
+                                ${summary1}
 
-Summary 2:
-${summary1}
+                                Combine the insights into a single clear, professional summary.`;
 
-Combine the insights into a single clear, professional summary.
-`;
-
-            const summary = llm.generateText({
+            const finalSummary = llm.generateText({
                 preamble: `You are an expert in summarizing purchase orders.`,
                 prompt: finalPrompt,
                 modelFamily: llm.ModelFamily.COHERE_COMMAND_R_PLUS,
@@ -150,13 +126,15 @@ Combine the insights into a single clear, professional summary.
                 }
             }).text;
 
-            context.response.write(JSON.stringify({
-                summary: summary
-            }));
+            return finalSummary;
+
+        } catch (e) {
+            log.error('PO Summary Generation Failed', e);
+            return 'Error generating PO summary: ' + e.message;
         }
     }
 
     return {
-        onRequest: onRequest
+        generateSummary: generateSummary
     };
 });
