@@ -1,43 +1,46 @@
 /**
  * @NApiVersion 2.1
  * @NScriptType Suitelet
+ * @Filename testSuitelet.js
+ * @Description Suitelet to test List-wise PO Summary Generator
  */
 
-define(['N/ui/serverWidget', 'N/log', './cache/poFieldCache.js'], (serverWidget, log, poCache) => {
-  function onRequest(context) {
-    const form = serverWidget.createForm({ title: 'Test Purchase Order Field Cache' });
+define([
+    'N/ui/serverWidget',
+    'N/log',
+    './Popup/handlers/poListSummary.js'
+], function (serverWidget, log, poListSummary) {
 
-    // Collect all maps
-    const maps = {
-      Locations: poCache.getLocationMap(),
-      Vendors: poCache.getVendorMap(),
-      Statuses: poCache.getStatusMap(),
-      Subsidiaries: poCache.getSubsidiaryMap(),
-      Departments: poCache.getDepartmentMap(),
-      Classes: poCache.getClassMap()
-    };
+    function onRequest(context) {
+        if (context.request.method === 'GET') {
+            try {
+                const form = serverWidget.createForm({ title: 'PO List Summary Tester' });
 
-    // Build display output
-    let display = '';
-    for (const label in maps) {
-      const map = maps[label];
-      display += `=== ${label} ===\n`;
-      for (const name in map) {
-        display += `${name} → ${map[name]}\n`;
-      }
-      display += '\n';
+                // Call your summary generator
+                const summary = poListSummary.generateListSummary();
+
+                // Add a large field to show the summary
+                const summaryField = form.addField({
+                    id: 'custpage_summary_output',
+                    type: serverWidget.FieldType.LONGTEXT,
+                    label: 'Generated Summary'
+                });
+
+                summaryField.defaultValue = summary;
+                summaryField.updateDisplaySize({ height: 30, width: 100 });
+                summaryField.updateBreakType({ breakType: serverWidget.FieldBreakType.STARTCOL });
+                summaryField.updateLayoutType({ layoutType: serverWidget.FieldLayoutType.OUTSIDEABOVE });
+                summaryField.updateDisplayType({ displayType: serverWidget.FieldDisplayType.INLINE });
+
+                context.response.writePage(form);
+            } catch (e) {
+                log.error('Summary Generation Error', e);
+                context.response.write('Error: ' + e.message);
+            }
+        }
     }
 
-    // Add field to display results
-    form.addField({
-      id: 'custpage_output',
-      label: 'PO Field Cache Output',
-      type: serverWidget.FieldType.LONGTEXT
-    }).defaultValue = display;
-
-    context.response.writePage(form);
-  }
-
-  return { onRequest };
-
+    return {
+        onRequest: onRequest
+    };
 });
