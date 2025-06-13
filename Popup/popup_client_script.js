@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType ClientScript
  */
-define(['N/currentRecord', 'N/url', 'N/https'], function(currentRecord, url, https) {
+define(['N/currentRecord', 'N/url', 'N/https','N/log'], function(currentRecord, url, https, log) {
 
     function showStyledPopup(summaryHtml) {
     const existing = document.getElementById('styled-popup');
@@ -47,6 +47,7 @@ define(['N/currentRecord', 'N/url', 'N/https'], function(currentRecord, url, htt
         width: '700px',  // ← wider popup
         border: '1px solid #999',
         boxShadow: '0 3px 12px rgba(0,0,0,0.3)',
+
         backgroundColor: '#fff',
         zIndex: 9999,
         fontFamily: 'Arial, sans-serif',
@@ -69,18 +70,22 @@ define(['N/currentRecord', 'N/url', 'N/https'], function(currentRecord, url, htt
                 recordType: recordType
             }
         });
-
+            console.log('recordType',recordType);
         https.get.promise({ url: suiteletUrl }).then(function(response) {
-             var parsed = JSON.parse(response.body);
-        var summary = parsed.summary || 'No summary returned.';
+            var parsed = JSON.parse(response.body);
+            
+            var summary = typeof parsed.summary === 'string'
+                ? parsed.summary
+                : JSON.stringify(parsed.summary, null, 2);
 
-        showStyledPopup(`
-            <strong>LLM Summary:</strong><br>
-            ${summary.replace(/\n/g, '<br>')}
-        `);
+            showStyledPopup(`
+                <strong>LLM Summary:</strong><br>
+                ${summary}
+            `);
         }).catch(function(error) {
             console.log('Error:', error.message);
         });
+
     }
 
     function pageInit(context) {

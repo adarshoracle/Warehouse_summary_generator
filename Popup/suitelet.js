@@ -1,6 +1,12 @@
+/**
+ * @NApiVersion 2.1
+ * @NScriptType Suitelet
+ */
+
+
 define(['N/ui/serverWidget', 'N/record', 'N/llm', 'N/log',
-        './handlers/poSummary', './handlers/waveSummary', './handlers/soSummary'],
-function(serverWidget, recordModule, llm, log, poSummary, waveSummary, soSummary) {
+        './handlers/poSummary', './handlers/waveSummary'],
+function(serverWidget, recordModule, llm, log, poSummary, waveSummary) {
 
     function onRequest(context) {
         var request = context.request;
@@ -20,7 +26,6 @@ function(serverWidget, recordModule, llm, log, poSummary, waveSummary, soSummary
             } else {
                 summary = 'Unsupported record type.';
             }
-
             context.response.write(JSON.stringify({ summary: summary }));
         }
     }
